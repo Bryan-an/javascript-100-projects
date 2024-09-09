@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Excel.js</title>
+
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+          Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue',
+          sans-serif;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      img {
+        max-width: 20px;
+        height: auto;
+      }
+
+      table {
+        border-collapse: collapse;
+      }
+
+      thead,
+      tr td:first-child {
+        background: #eee;
+      }
+
+      th,
+      td {
+        border: 1px solid #ccc;
+        font-weight: normal;
+        font-size: 12px;
+        text-align: center;
+        width: 64px;
+        height: 20px;
+        vertical-align: middle;
+        position: relative;
+      }
+
+      tr th:first-child,
+      tr td:first-child {
+        width: fit-content;
+        padding: 0 8px;
+      }
+
+      span,
+      input {
+        position: absolute;
+        inset: 0;
+        vertical-align: middle;
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      input {
+        border: none;
+        opacity: 0;
+        pointer-events: none;
+        width: 100%;
+
+        &:focus {
+          opacity: 1;
+          outline: 2px solid #09f;
+        }
+      }
+
+      .selected {
+        background: rgb(174, 223, 255);
+      }
+
+      th.selected {
+        background: rgb(146, 211, 255);
+      }
+    </style>
+
+    <script type="module">
+      const $ = (selector) => document.querySelector(selector);
+      const $$ = (selector) => document.querySelectorAll(selector);
+
+      const $table = $('table');
+      const $head = $('thead');
+      const $body = $('tbody');
+
+      const ROWS = 10;
+      const COLUMNS = 5;
+      const FIRST_CHAR_CODE = 65;
+
+      const range = (length) => Array.from({ length }, (_, i) => i);
+      const getColumn = (i) => String.fromCharCode(FIRST_CHAR_CODE + i);
+
+      let selectedColumn = null;
+
+      let STATE = range(ROWS).map((row) =>
+        range(COLUMNS).map((column) => ({
+          computedValue: ``,
+          value: ``,
+        }))
+      );
+
+      function updateCell({ row, column, value }) {
+        const newState = structuredClone(STATE);
+        const cell = newState[row][column];
+
+        cell.computedValue = computeValue(
+          value,
+          generateCellsConstants(newState)
+        );
+
+        cell.value = value;
+
+        computeAllCells(newState, generateCellsConstants(newState));
+
+        STATE = newState;
+
+        renderSpreadSheet();
+      }
+
+      function generateCellsConstants(cells) {
+        return cells
+          .map((rows, rowIndex) => {
+            return rows
+              .map((cell, columnIndex) => {
+                const letter = getColumn(columnIndex);
+                const cellId = `${letter}${rowIndex + 1}`;
+                return `const ${cellId} = Number(${cell.computedValue});`;
+              })
+              .join('\n');
+          })
+          .join('\n');
+      }
+
+      function computeAllCells(cells, constants) {
+        cells.forEach((rows, rowIndex) => {
+          rows.forEach((cell, columnIndex) => {
+            const computedValue = computeValue(cell.value, constants);
+            cell.computedValue = computedValue;
+          });
+        });
+      }
+
+      function computeValue(value, constants) {
+        if (!String(value).startsWith('=')) return value;
+
+        const formula = value.slice(1);
+
+        let computedValue;
+
+        try {
+          computedValue = eval(`(() => {
+            ${constants}
+            return ${formula};
+          })()`);
+        } catch (error) {
+          computedValue = `!ERROR: ${error.message}`;
+        }
+
+        return computedValue;
+      }
+
+      const renderSpreadSheet = () => {
+        const headerHTML = `
+          <tr>
+            <th></th>
+            ${range(COLUMNS)
+              .map((index) => `<th>${getColumn(index)}</th>`)
+              .join('')}
+          </tr>
+        `;
+
+        $head.innerHTML = headerHTML;
+
+        const bodyHTML = range(ROWS)
+          .map(
+            (rowIndex) => `
+                <tr>
+                  <td>${rowIndex + 1}</td>
+                  ${range(COLUMNS)
+                    .map(
+                      (columnIndex) =>
+                        `<td data-column="${columnIndex}" data-row="${rowIndex}">
+                          <span>${STATE[rowIndex][columnIndex].computedValue}</span>
+                          <input type="text" value="${STATE[rowIndex][columnIndex].value}" />  
+                        </td>`
+                    )
+                    .join('')}
+                </tr>
+              `
+          )
+          .join('');
+
+        $body.innerHTML = bodyHTML;
+      };
+
+      $body.addEventListener('click', (event) => {
+        const $td = event.target.closest('td');
+        if (!$td) return;
+
+        const { column, row } = $td.dataset;
+        const $input = $td.querySelector('input');
+
+        const end = $input.value.length;
+        $input.setSelectionRange(end, end);
+        $input.focus();
+
+        $input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            $input.blur();
+          }
+        });
+
+        $input.addEventListener(
+          'blur',
+          () => {
+            if ($input.value === STATE[row][column].value) return;
+
+            updateCell({ row, column, value: $input.value });
+          },
+          { once: true }
+        );
+      });
+
+      $head.addEventListener('click', (event) => {
+        const $th = event.target.closest('th');
+        if (!$th) return;
+
+        selectedColumn = $th.cellIndex - 1;
+        if (selectedColumn < 0) return;
+
+        $$('.selected').forEach(($el) => $el.classList.remove('selected'));
+
+        $th.classList.add('selected');
+
+        $$(`tr td:nth-child(${selectedColumn + 2})`).forEach(($td) =>
+          $td.classList.add('selected')
+        );
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Backspace' && selectedColumn !== null) {
+          range(ROWS).forEach((row) => {
+            updateCell({ row, column: selectedColumn, value: '' });
+          });
+        }
+      });
+
+      document.addEventListener('copy', (event) => {
+        if (selectedColumn === null) return;
+
+        event.preventDefault();
+
+        const columnValues = range(ROWS).map(
+          (row) => STATE[row][selectedColumn].computedValue
+        );
+
+        event.clipboardData.setData('text/plain', columnValues.join('\n'));
+      });
+
+      document.addEventListener('click', (event) => {
+        const { target } = event;
+
+        const isThClicked = target.closest('th');
+
+        if (!isThClicked) {
+          $$('.selected').forEach(($el) => $el.classList.remove('selected'));
+          selectedColumn = null;
+        }
+      });
+
+      renderSpreadSheet();
+    </script>
+  </head>
+  <body>
+    <img
+      src="https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/Microsoft_Excel_2013-2019_logo.svg/1174px-Microsoft_Excel_2013-2019_logo.svg.png"
+      alt="Excel logo"
+    />
+
+    <table>
+      <thead></thead>
+      <tbody></tbody>
+    </table>
+  </body>
+</html>
